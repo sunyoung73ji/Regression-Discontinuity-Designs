@@ -1,0 +1,169 @@
+---
+title: "Causality and Program evalustion_Assignment"
+author: 'Sunyoung Ji, ID: 229979 (TU Dortmund)'
+date: '`r Sys.Date()`'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Used libraries are given below:
+```{r library, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(rdd)
+library(rddtools)
+```
+
+# 0. Set up
+
+```{r set up, echo=TRUE, warning=FALSE}
+ebike <- read_csv("dataset1.csv")
+ebike <- as_tibble(ebike)
+view(ebike)
+```
+
+# 1. Task(a)
+
+```{r task(a), echo=TRUE}
+threshold <- ggplot(ebike,
+                    aes(x = distance, y = free_bicycle)) +
+  geom_point() +
+  labs(x = "Distance", y = "Free bicycle",
+       title = ("The compliance with the 5km rule")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_vline(xintercept = 5, colour = "red",
+             size = 1, linetype = "dashed") +
+  annotate("text", x = 4, y = 1, label = "5km",
+           size=4, color = "red")
+threshold
+```
+This graph illustrates that "dataset1" satisfies the rule of distance.
+
+# Task(b)
+
+From (a), we can see that the treatment(`free_bicycle`) is assigned by the threshold(5km Rule). Therefore, the impact of free ebike policy can be estimated by Sharp Regression Discontinuity Designs. It should hold the following assumptions:
+1) There is a discontinuity in the probability of treatment at the threshold
+2) Individuals’ value of the treatment variable was not manipulated
+3) Continuity of potential outcomes around threshold
+
+# Task(c)
+
+McCrary Sorting Test:
+We can check that the score would not manipulated in the McCrary test. The density of distance almost continuous.
+
+```{r manipulation test, echo = TRUE}
+
+DCdensity(ebike$distance, cutpoint = 5, ext.out = FALSE, plot = TRUE)
+
+```
+
+# Task (d)
+ 
+Placebo test with age and number of roommates as dependent variables:
+
+```{r placebo, echo=TRUE}
+
+plac_age <-lm(age ~ distance, data = ebike)
+plac_room <-lm(number_roomates ~ distance, data = ebike)
+
+plac_linear <- cbind(plac_age$coefficients[2], plac_room$coefficients[2])
+colnames(plac_linear) <- c("age", "roommates")
+rownames(plac_linear) <- "plac_linear"
+
+plac_linear <- round(plac_linear, 4)
+
+```
+
+Through the placebo regression, we can know that these dependent variables have almost zero linear dependency with other variables. 
+
+However, when these dependent variables are applied for the same model in (e), the placebo effects increase:
+
+```{r plac rd, echo=TRUE}
+plac_age_rd <- rdd_data(y = ebike$age, x = ebike$distance,
+                     cutpoint = 5)
+reg_para_age <- rdd_reg_lm(rdd_object=plac_age_rd)
+
+plac_room_rd <- rdd_data(y = ebike$number_roomates, x = ebike$distance,
+                     cutpoint = 5)
+reg_para_room <- rdd_reg_lm(rdd_object=plac_room_rd)
+
+plac_rd <- cbind(reg_para_age$coefficients, reg_para_room$coefficients)
+colnames(plac_rd) <- c("age", "roommates")
+plac_rd <- round(plac_rd[2,], 4)
+```
+
+We can comparison two results from two models:
+```{r plac comparison, echo=TRUE}
+rbind(plac_linear, plac_rd)
+```
+
+# Task (e)
+
+```{r obs hist, echo = TRUE}
+
+distance_hist <- ggplot(ebike, aes(distance)) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Distance", y = "Count",
+       title = ("Histogram of Distance")) +
+  theme(plot.title = element_text(hjust = 0.5))+
+  geom_vline(xintercept = 5, colour = "red",
+             size = 1, linetype = "dashed") +
+
+  annotate("text", x = 4, y = 1000, label = "5km",
+           size=4, color = "red")
+
+distance_hist
+```
+
+As histogram of distance shows, we have observations that are distributed very differently depending on the distance. Including more observations farther away from threshold would generate excessive bias. Thus, I choose a local linear regression model and bandwidth 1.
+
+1) The RDD model:
+$$
+Y=\alpha + \tau*D + \beta_1(X-c) + \beta_2*D(X-c) + \epsilon
+$$
+
+2) Finding a bandwidth: Kernel selection:
+
+```{r band, echo=TRUE}
+
+rdd_data <- rdd_data(y = ebike$score, x = ebike$distance,
+                     cutpoint = 5)
+
+bandwidth <- rdd_bw_cct_estim(rdd_data)
+bandwidth
+
+```
+
+3) RD simulation: 
+```{r rd sim, echo=TRUE}
+
+reg_para_bw1 <- rdd_reg_lm(rdd_object=rdd_data, bw = 1)
+reg_para_bw1
+
+ebike %>%
+  select(distance, score) %>%
+  mutate(threshold = as.factor(ifelse(distance >= 5, 1, 0))) %>%
+  ggplot(aes(x = distance, y = score, color = threshold)) +
+  geom_point(size = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_brewer(palette = "Accent") +
+  guides(color = "none") +
+  geom_vline(xintercept = 5, color = "black",
+             size = 1, linetype = "dashed") +
+  labs(y = "Exam Score",
+       x = "Distance")
+```
+
+# Task(f)
+
+According to result from McCrary test, the external validity of the model in (e) is satisfied.
+
+```{r rd mc, echo=TRUE}
+
+DCdensity(rdd_data$x, cutpoint = 5, ext.out = FALSE, plot = TRUE, bw = 1)
+
+```
